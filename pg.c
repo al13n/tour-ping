@@ -3,21 +3,9 @@
 
 static pg_seq_no = 1;
 
-char* ethAddrNtoP(char *nMAC) {
-    static char pMAC[25];
-    char buf[10];
-    int i;
-
-    pMAC[0] = '\0';
-    for (i = 0; i < IF_HADDR; i++) {
-        sprintf(buf, "%.2x%s", nMAC[i] & 0xff , i == 5 ? "" : ":");
-        strcat(pMAC, buf);
-    }
-    return pMAC;
-}
-
 void send_pgPacket(int pf_fd, struct in_addr srcIP, struct in_addr destIP, char *host_eth){
 	
+	printf("\nCreate and send Ping packet to preceeding node\n");
 	pgPacket packet;
 	memset(&packet,  '\0', sizeof(pgPacket));
 	hwaddr *HWaddr;
@@ -33,9 +21,10 @@ void send_pgPacket(int pf_fd, struct in_addr srcIP, struct in_addr destIP, char 
 	IPaddr->sin_addr.s_addr = destIP.s_addr;
 
 	int sock_len = sizeof(struct sockaddr);
+	printf("\nPing Packet Send: Ask AREQ api to get hardware address\n");
 	areq((struct sockaddr *)IPaddr, sock_len, HWaddr);
 
-	printf("Recv from AREQ: %s\n", ethAddrNtoP(HWaddr->sll_addr));
+	printf("\nRecv from AREQ: %s\n", ethAddrNtoP(HWaddr->sll_addr));
 
 	memcpy(packet.destEth, HWaddr->sll_addr, IF_HADDR);
 	memcpy(packet.srcEth, host_eth, IF_HADDR);
@@ -78,8 +67,13 @@ void send_pgPacket(int pf_fd, struct in_addr srcIP, struct in_addr destIP, char 
 	sockAddr.sll_ifindex = 2;
 	memcpy(sockAddr.sll_addr, HWaddr->sll_addr, IF_HADDR);
 
+	printf("\nSend ping packet on received MAC addr\n");
+
 	if( sendto(pf_fd, &packet, sizeof(packet), 0, (struct sockaddr *)&sockAddr, sizeof(sockAddr)) < 0 ){
 		perror("ping packet: SENDTO error");
+	}
+	else{
+		printf("Ping packet sent...\n");
 	}
 
 

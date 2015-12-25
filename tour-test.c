@@ -17,9 +17,21 @@ struct in_addr ipList[MAXHOPS];
 int mPort;
 struct in_addr mIP;
 int inGroup = 0;
+int isLastNodeOfTour = 0;
+sendPings sendPingTo[MAXHOPS];
 
 
 void get_hw_addr(char*);
+
+int shouldPing(){
+    int i;
+    for(i = 0; i < MAXHOPS; i++){
+        if(sendPingTo[i].valid){
+            return 1;
+        }
+    }
+    return 0;
+}
 
 void setMultiCast() {
     if(!inGroup){
@@ -71,18 +83,20 @@ void fillIPHeader(Packet* packet, struct in_addr destip, int numBytes) {
 }
 
 void createPacket(Packet* packet, int total_nodes){
+    printf("Create tour packet: \n");
     bzero(packet, sizeof(Packet));
     packet->data.total_nodes = total_nodes;
     memcpy(packet->data.tourList, ipList, (sizeof(struct in_addr) * MAXHOPS));
     packet->data.currentPos = 0;
     packet->data.multicastIP   = mIP;
     packet->data.multicastPort = mPort;
+    printf("Total nodes in tour: %d\n", total_nodes);
     fillIPHeader(packet, packet->data.tourList[packet->data.currentPos + 1], sizeof(Packet));
 }
 
 void updateAndSendPacket(Packet* packet){
+    printf("Node %s :Updating and sending tour packet forward\n", hostname);
 	packet->data.currentPos++;
-
 	struct sockaddr_in tourSockAddr;
 	bzero(&tourSockAddr, sizeof(tourSockAddr));
     tourSockAddr.sin_family = AF_INET;
@@ -104,6 +118,7 @@ static void handleMulticast() {
 
     n = Recvfrom(mSD, buf, MAX_BUF, 0, NULL, NULL);
     buf[n] = '\0';
+    printf("Node %s. Received Multicast message from group\n", hostname);
     printf("Node %s. Received: %s\n", hostname, buf);
 
     /* set up destination address */
@@ -113,6 +128,7 @@ static void handleMulticast() {
     addr.sin_port = htons(mPort);
 
     sprintf(buf, "<<<<< Node %s. I am a member of the group. >>>>>",hostname);
+    printf("\nNode %s => Sending to multicast group\n\n", hostname);
     printf("\nNode %s => Sending: %s\n\n", hostname, buf);
 
     Sendto(mSD, buf, sizeof(buf), 0, (SA *) &addr, sizeof(addr));
@@ -157,7 +173,7 @@ void sendToMulticastGroup() {
 
 void createSockets() {
 	int iOptVal;
-
+    printf("\nCreating 4 sockets:\n");
     if((rtSD   = socket(AF_INET, SOCK_RAW, IPPROTO_TOUR)) < 0){
     	err_quit("rtSD: socket error");
     }
@@ -165,6 +181,7 @@ void createSockets() {
     	if (setsockopt(rtSD, IPPROTO_IP, IP_HDRINCL, &iOptVal, sizeof(iOptVal)) < 0){
     		err_quit("rtSD: setsockopt error");
     	}
+        printf("Route Socket created\n");
     }
 
     if((mSD   = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
@@ -174,14 +191,23 @@ void createSockets() {
     	if (setsockopt(mSD, SOL_SOCKET, SO_REUSEADDR, &iOptVal, sizeof(iOptVal)) < 0){
     		err_quit("mSD: setsockopt error");
     	}
+        printf("Multicast Socket created\n");
     }
     if((pgReqSD   = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IP))) < 0){
     	err_quit("pgReqSD: socket error");
+    }
+    else{
+        printf("Ping Request Socket created\n");
     }
 
     if((pgRepSD = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0){
     	err_quit("pgRepSD: socket error");
     }
+    else{
+        printf("Ping Reply Socket created\n");
+    }
+
+    printf("---------------------------------------------------\n");
 }
 
 
@@ -198,6 +224,19 @@ void initMulticast(struct in_addr multicastIP, int port){
     mPort = port;
 }
 
+char* ethAddrNtoP(char *nMAC) {
+    static char pMAC[25];
+    char buf[10];
+    int i;
+
+    pMAC[0] = '\0';
+    for (i = 0; i < IF_HADDR; i++) {
+        sprintf(buf, "%.2x%s", nMAC[i] & 0xff , i == 5 ? "" : ":");
+        strcat(pMAC, buf);
+    }
+    return pMAC;
+}
+
 /* ALl the initialisation method calls here */
 void init(){
     struct in_addr ip;
@@ -206,6 +245,8 @@ void init(){
 	hostip = getInaddr(hostvm->h_addr);
     get_hw_addr(host_ether);
 	ipList[0] = hostip;
+    printf("Hostname: %s\n", hostname);
+    printf("Host Ethernet Addr: %s", ethAddrNtoP(host_ether));
 	createSockets();
     inet_pton(AF_INET, MULTICAST_IP, &ip);
     initMulticast(ip, MULTICAST_PORT);
@@ -236,19 +277,39 @@ int main(int argc, char* argv[]){
 		bzero(&packet, sizeof(Packet));
 	}
 
+    int lastNodePings = 5;
     while (1) {
     	FD_ZERO(&fdSet);
     	FD_SET(rtSD, &fdSet);
     	FD_SET(pgRepSD, &fdSet);
         FD_SET(mSD, &fdSet);
             
-        
+        struct timeval timeout;
+        timeout.tv_sec  = 5;
+        timeout.tv_usec = 0;
+
         maxfd = max(rtSD, pgRepSD);
         maxfd = max(maxfd, mSD);
-        int n = Select(maxfd + 1, &fdSet, NULL, NULL, NULL);
+        int n = Select(maxfd + 1, &fdSet, NULL, NULL, shouldPing() ? &timeout: NULL);
+
+
+        if( n == 0){
+            printf("Ping timed out: Send new ping request\n");
+            if(isLastNodeOfTour){
+                if(lastNodePings == 0){
+                    sendToMulticastGroup();
+                }
+                lastNodePings--;
+            }
+            int i;
+            for(i = 0; i < MAXHOPS; i++){
+                if(sendPingTo[i].valid)
+                    send_pgPacket(pgReqSD, hostip, sendPingTo[i].ip, host_ether); 
+            }
+        }
 
         if(FD_ISSET(pgRepSD, &fdSet)){
-            printf("RECVD ping reply\n");
+            printf("\nReceived ping packet: \n");
             proc_v4(pgRepSD);
         }
 
@@ -276,13 +337,23 @@ int main(int argc, char* argv[]){
 
                 initMulticast(packet.data.multicastIP, packet.data.multicastPort);
                 setMultiCast();
+                int i;
+                for(i = 0; i < MAXHOPS; i++){
+                    if(!sendPingTo[i].valid){
+                        sendPingTo[i].valid = 1;
+                        sendPingTo[i].ip = packet.data.tourList[packet.data.currentPos-1];
+                        break;
+                    }
+                }
 
                 //send_pgPacket(int pf_fd, struct in_addr srcIP, struct in_addr destIP, char *host_eth);
-                send_pgPacket(pgReqSD, hostip, packet.data.tourList[packet.data.currentPos-1], host_ether);
-
+                
+                send_pgPacket(pgReqSD, hostip, packet.data.tourList[packet.data.currentPos-1], host_ether); 
+                
+                
     			if(packet.data.currentPos == (packet.data.total_nodes-1)){
     				printf("<<<<< This is %s. Tour has ended. Group members please identify yourselves. >>>>>\n", hostname);
-    			    sendToMulticastGroup();
+    			    isLastNodeOfTour = 1;
                 }
     			else{
     				updateAndSendPacket(&packet);

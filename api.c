@@ -3,7 +3,7 @@
 //{
 
 int areq(struct sockaddr *IPaddr, socklen_t sockaddrlen, hwaddr *HWaddr){
-
+    printf("\nAREQ api:\n");
     api_packet packet;
     packet.ifindex = HWaddr->sll_ifindex;
     packet.hatype = HWaddr->sll_hatype;
@@ -11,7 +11,7 @@ int areq(struct sockaddr *IPaddr, socklen_t sockaddrlen, hwaddr *HWaddr){
 
     char ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET,&(packet.ip),ip,INET_ADDRSTRLEN);
-    printf("AREQ: get hwaddr of %s", ip);
+    printf("\nAREQ: get hwaddr of %s\n", ip);
 
     char filePath[1024];
 
@@ -34,7 +34,6 @@ int areq(struct sockaddr *IPaddr, socklen_t sockaddrlen, hwaddr *HWaddr){
     if (s<0)
         perror("AREQ: write error");
 
-
     // Select to get reply back
     fd_set fdSet;
     struct timeval timeout;
@@ -47,8 +46,9 @@ int areq(struct sockaddr *IPaddr, socklen_t sockaddrlen, hwaddr *HWaddr){
     s =select(sockfd+1,&fdSet,NULL,NULL,&timeout);
 
     //timeout
-    if (s <= 0){
-        printf("\n areq timeout");
+    if (s == 0){
+        printf("\n AREQ: areq timeout \n");
+        //
         close(sockfd);
         return -1;
     }

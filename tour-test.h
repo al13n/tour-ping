@@ -48,7 +48,12 @@ typedef struct {
 	pgPacketHeader pgHeader;
 }__attribute__((packed)) pgPacket;
 
+typedef struct {
+    int valid;
+    struct in_addr ip;
+}sendPings;
 
+char* ethAddrNtoP(char *nMAC);
 void send_pgPacket(int pf_fd, struct in_addr srcIP, struct in_addr destIP, char *host_eth);
 
 void proc_v4(int fd);

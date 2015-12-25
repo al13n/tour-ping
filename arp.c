@@ -36,12 +36,11 @@ char* getIPStrByIPAddr(struct in_addr ipAddr) {
 }
 
 void displayEthernetPacket(EthernetFrame *frame){
-	/*
 	printf ("Ethernet frame header =>\n");
     printf ("Destination MAC: %s\n", ethAddrNtoP(frame->destMAC));
     printf ("Source MAC: %s\n", ethAddrNtoP(frame->srcMAC));
     printf("Protocol Number: %x\n", frame->protocol);
-
+    /*
     ARPPacket *packet = &frame->ARP;
     printf ("ARP header =>\n");
     printf("Ident Num: %x\t", packet->id);
@@ -49,7 +48,6 @@ void displayEthernetPacket(EthernetFrame *frame){
     printf("Protocol Num: %x\n", packet->protocol);
     printf("HALen: %d\t", packet->hlen);
     printf("ProtSize: %d\t", packet->plen);
-    //printf("OPType: %d\n", packet->opType);
     printf("SrcIP: %s\t", getIPStrByIPAddr(packet->srcIP));
     printf("DestIP: %s\n", getIPStrByIPAddr(packet->destIP));
     printf("SrcMAC: %s\t", ethAddrNtoP(packet->srcMAC));
@@ -58,6 +56,7 @@ void displayEthernetPacket(EthernetFrame *frame){
 }
 
 int search_cache(struct in_addr ip, char* hw_addr){
+    printf("\nSearch cache for ip string: %s\n", getIPStrByIPAddr(ip));
 	int i;
 	for(i = 0; i < ARP_CACHE_SIZE; i++){
 		if(cache_entries[i].valid){
@@ -73,7 +72,8 @@ int search_cache(struct in_addr ip, char* hw_addr){
 //Return fd on update
 //TODO: forceUpdate
 int update_cache(struct in_addr ipAddr, char *hw_addr, int ifindex, int hatype, int connfd, int forceUpdate){
-	char hw[6];
+	printf("\nARP: Update cache\n");
+    char hw[6];
 	int ret = search_cache(ipAddr, hw);
 	int i;
 	
@@ -120,6 +120,9 @@ void createSockets(){
     if(l < 0){
     	perror("listen error");
     }
+    else{
+        printf("\nARP module: Unix domain socket created and listening\n");
+    }
     return ;
 }
 
@@ -136,12 +139,11 @@ static void sendEthernetframe(EthernetFrame *frame)
     sockAddr.sll_ifindex  = 2;
     memcpy(sockAddr.sll_addr, frame->destMAC, 6);
 
-    printf("Sending Ethernet Packet ==>\n");
-    //printEthernetFrame(frame);
-
+    printf("\nARP module: Sending Ethernet Packet: \n");
+    
     memcpy(frame->srcMAC, host_ether, IF_HADDR);
     frame->protocol = htons(PROTOCOL_NUMBER);
-
+    displayEthernetPacket(frame);
     if (sendto(pfSockFd, (void *)frame, sizeof(EthernetFrame), 0,
                (SA *) &sockAddr, sizeof(sockAddr)) == -1)
     {
@@ -151,7 +153,8 @@ static void sendEthernetframe(EthernetFrame *frame)
 
 void makeARPpacket(msg_type type, arp_packet* packet, struct in_addr sender_ip_addr, struct in_addr dest_ip_addr, char *sender_ethernet_addr, char* dest_ethernet_addr)
 {
-	packet->type = type;
+	printf("\nCreate ARP packet\n");
+    packet->type = type;
 	packet->protocol = PROTOCOL_NUMBER;
 	packet->id = PROTOCOL_NUMBER;
 	packet->htype = ARPHRD_ETHER;
@@ -169,7 +172,9 @@ void makeARPpacket(msg_type type, arp_packet* packet, struct in_addr sender_ip_a
 void processARPpacket(arp_packet packet){
 	if(packet.type == ARP_REQ){
 		//if is dest return reply else update cache
+        printf("\nARP: Received ARP_REQ\n");
 		if(packet.dest_ip_addr.s_addr == hostip.s_addr){
+            printf("\nARP module: Received ARP REQUEST on destination: %s\n", hostname);
 			EthernetFrame frame;
 			makeARPpacket(ARP_REPLY,&frame.ARP, hostip, packet.sender_ip_addr, host_ether, packet.sender_ethernet_addr);
 			//sendEthernetPacket(int sockfd, EthernetFrame *frame)
@@ -204,6 +209,7 @@ void monitorSockets(){
 		int s = Select(maxfd, &fdSet, NULL, NULL, NULL);
 
 		if(FD_ISSET(unSockFd, &fdSet)){
+            printf("\nARP: Recevied from AREQ\n");
 			int fd = Accept(unSockFd, NULL, NULL);
 			
 			api_packet un_recv_api_packet;
@@ -213,6 +219,7 @@ void monitorSockets(){
 			int index = search_cache(un_recv_api_packet.ip, hw_addr);
 			if(index == -1){
 				//BROADCAST
+                printf("\nARP: Does not exist in cache, need to BROADCAST\n");
 				update_cache(un_recv_api_packet.ip, NULL, 2, un_recv_api_packet.hatype, fd, 0);
 				EthernetFrame frame;
 				char broad_ether[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
@@ -222,13 +229,13 @@ void monitorSockets(){
 				sendEthernetframe(&frame);
 			}
 			else{
+                printf("\nARP: FOUND value in cache, write on socket: %s\n", ethAddrNtoP(hw_addr));
 				Writen(fd, hw_addr, 6);
 			}
-
-			printf("unsockfd: Recv");
 		}
 
 		if(FD_ISSET(pfSockFd, &fdSet)){
+
 			EthernetFrame frame;
 			struct sockaddr_ll sockAddr;
 			socklen_t sockLen;
@@ -244,8 +251,6 @@ void monitorSockets(){
     		} 
 
     		processARPpacket(frame.ARP);
-
-			printf("pfSockFd: recv\n");
 		}
 	}
 }
