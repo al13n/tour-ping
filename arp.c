@@ -36,23 +36,28 @@ char* getIPStrByIPAddr(struct in_addr ipAddr) {
 }
 
 void displayEthernetPacket(EthernetFrame *frame){
-	printf ("Ethernet frame header =>\n");
+	printf ("ARP: Ethernet frame header:\n");
     printf ("Destination MAC: %s\n", ethAddrNtoP(frame->destMAC));
     printf ("Source MAC: %s\n", ethAddrNtoP(frame->srcMAC));
     printf("Protocol Number: %x\n", frame->protocol);
-    /*
-    ARPPacket *packet = &frame->ARP;
+    arp_packet *packet = &frame->ARP;
     printf ("ARP header =>\n");
-    printf("Ident Num: %x\t", packet->id);
-    printf("HAType: %d\t", packet->htype);
+    printf("Type: ");
+    if(packet->type == ARP_REQ){
+        printf("ARP_REQ\n");
+    }
+    else
+        printf("ARP_REPLY\n");
+
+    printf("Ident Num: %x\n", packet->id);
+    printf("HAType: %d\n", packet->htype);
     printf("Protocol Num: %x\n", packet->protocol);
-    printf("HALen: %d\t", packet->hlen);
-    printf("ProtSize: %d\t", packet->plen);
-    printf("SrcIP: %s\t", getIPStrByIPAddr(packet->srcIP));
-    printf("DestIP: %s\n", getIPStrByIPAddr(packet->destIP));
-    printf("SrcMAC: %s\t", ethAddrNtoP(packet->srcMAC));
-    printf("DestMAC: %s\n", ethAddrNtoP(packet->destMAC));
-    */
+    printf("HALen: %d\n", packet->hlen);
+    printf("ProtSize: %d\n", packet->plen);
+    printf("SrcIP: %s\n", getIPStrByIPAddr(packet->sender_ip_addr));
+    printf("DestIP: %s\n", getIPStrByIPAddr(packet->dest_ip_addr));
+    printf("sender_ethernet_addr: %s\n", ethAddrNtoP(packet->sender_ethernet_addr));
+    printf("dest_ethernet_addr: %s\n", ethAddrNtoP(packet->dest_ethernet_addr));
 }
 
 int search_cache(struct in_addr ip, char* hw_addr){
@@ -201,19 +206,39 @@ void processARPpacket(arp_packet packet){
 //TODO: closed connectd unix socket
 void monitorSockets(){
 	fd_set fdSet;
+    int fd = -1;
+    struct in_addr fd_destIP;
 	while(1){
 		FD_ZERO(&fdSet);
 		FD_SET(pfSockFd, &fdSet);
 		FD_SET(unSockFd, &fdSet);
 		int maxfd = max(pfSockFd, unSockFd) + 1;
-		int s = Select(maxfd, &fdSet, NULL, NULL, NULL);
+		
+        if(fd != -1){
+            FD_SET(fd, &fdSet);
+            maxfd = max(maxfd, fd + 1);
+        }
+
+        int s = Select(maxfd, &fdSet, NULL, NULL, NULL);
+
+        if(fd != -1 && FD_ISSET(fd, &fdSet)){
+            printf("invalidate cache entry");
+            char hw_addr[6];
+            int idx = search_cache(fd_destIP, hw_addr);
+            cache_entries[idx].valid = 0;
+            close(fd);
+            fd = -1;
+        }
+
+
 
 		if(FD_ISSET(unSockFd, &fdSet)){
             printf("\nARP: Recevied from AREQ\n");
-			int fd = Accept(unSockFd, NULL, NULL);
+			fd = Accept(unSockFd, NULL, NULL);
 			
 			api_packet un_recv_api_packet;
 			int r = read(fd, &un_recv_api_packet, sizeof(api_packet));
+            fd_destIP = un_recv_api_packet.ip;
 			//int search_cache(struct in_addr ip, char* hw_addr)
 			char hw_addr[6];
 			int index = search_cache(un_recv_api_packet.ip, hw_addr);
@@ -231,6 +256,8 @@ void monitorSockets(){
 			else{
                 printf("\nARP: FOUND value in cache, write on socket: %s\n", ethAddrNtoP(hw_addr));
 				Writen(fd, hw_addr, 6);
+                close(fd);
+                fd = -1;
 			}
 		}
 
@@ -251,6 +278,10 @@ void monitorSockets(){
     		} 
 
     		processARPpacket(frame.ARP);
+            if(frame.ARP.type == ARP_REPLY){
+                //close();
+                fd = -1;
+            }
 		}
 	}
 }

@@ -49,6 +49,8 @@ int areq(struct sockaddr *IPaddr, socklen_t sockaddrlen, hwaddr *HWaddr){
     if (s == 0){
         printf("\n AREQ: areq timeout \n");
         //
+        char buf = 'C';
+        write(sockfd, &buf, 1);
         close(sockfd);
         return -1;
     }
